@@ -1,0 +1,15 @@
+/target
+**/*.rs.bk
+*.pdb
+
+# Editors
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Local config
+config.local.toml
+*.db
+*.db-wal
+*.db-shm

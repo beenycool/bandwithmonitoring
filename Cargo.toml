@@ -1,0 +1,53 @@
+[package]
+name = "bandwith"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Lightweight Windows bandwidth monitor (per-process, per-domain) with ETW capture and SQLite storage"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "bandwith"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bandwith"
+path = "src/main.rs"
+
+[dependencies]
+eframe      = "0.31"
+egui        = "0.31"
+egui_plot   = "0.31"
+tray-icon   = "0.24"
+rusqlite    = { version = "0.40", features = ["bundled"] }
+tokio       = { version = "1", features = ["rt-multi-thread","macros","time","sync"] }
+hickory-resolver = "0.26"
+moka        = { version = "0.12", features = ["future"] }
+crossbeam-channel = "0.5"
+parking_lot = "0.12"
+dirs        = "6"
+tracing     = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde       = { version = "1", features = ["derive"] }
+toml        = "0.8"
+anyhow      = "1"
+thiserror   = "2"
+clap        = { version = "4", features = ["derive"] }
+
+[target.'cfg(windows)'.dependencies]
+ferrisetw   = "1.2"
+windows     = { version = "0.58", features = ["Win32_System_Threading","Win32_System_SystemInformation","Win32_Foundation"] }
+
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+
+[profile.dev]
+opt-level = 0
+debug = true
