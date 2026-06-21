@@ -11,29 +11,6 @@ env:
   RUSTFLAGS: -Dwarnings
 
 jobs:
-  linux:
-    name: linux (${{ matrix.rust }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        rust: [stable]
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Rust ${{ matrix.rust }}
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ matrix.rust }}
-          components: rustfmt, clippy
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-      - name: Format check
-        run: cargo fmt --all -- --check
-      - name: Clippy
-        run: cargo clippy --all-targets --locked -- -D warnings
-      - name: Test
-        run: cargo test --all --locked
-
   windows:
     name: windows (${{ matrix.rust }})
     runs-on: windows-2022

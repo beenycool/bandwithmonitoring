@@ -14,11 +14,8 @@ path = "src/lib.rs"
 name = "bandwith"
 path = "src/main.rs"
 
+# Cross-platform (pure Rust, no system deps):
 [dependencies]
-eframe      = "0.31"
-egui        = "0.31"
-egui_plot   = "0.31"
-tray-icon   = "0.24"
 rusqlite    = { version = "0.40", features = ["bundled"] }
 tokio       = { version = "1", features = ["rt-multi-thread","macros","time","sync"] }
 hickory-resolver = "0.26"
@@ -34,7 +31,12 @@ anyhow      = "1"
 thiserror   = "2"
 clap        = { version = "4", features = ["derive"] }
 
+# Windows-only GUI stack (eframe/egui/tray-icon all pull GTK on Linux via wayland/wgpu):
 [target.'cfg(windows)'.dependencies]
+eframe      = "0.31"
+egui        = "0.31"
+egui_plot   = "0.31"
+tray-icon   = "0.24"
 ferrisetw   = "1.2"
 windows     = { version = "0.58", features = ["Win32_System_Threading","Win32_System_SystemInformation","Win32_Foundation"] }
 
