@@ -1,4 +1,5 @@
 use clap::Parser;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Parser)]
 #[command(name = "bandwith", about = "Lightweight bandwidth monitor", version)]
@@ -7,8 +8,13 @@ pub struct Args {
     #[arg(long)]
     pub headless: bool,
 
+    /// Synthesize 1000 fake rows, write them, print top domains, exit.
+    /// Smoke test for the storage layer.
+    #[arg(long)]
+    pub demo: bool,
+
     /// Path to config file (defaults to %APPDATA%/bandwith/config.toml on Windows,
     /// ~/.config/bandwith/config.toml elsewhere).
     #[arg(long)]
-    pub config: Option<std::path::PathBuf>,
+    pub config: Option<PathBuf>,
 }

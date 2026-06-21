@@ -31,6 +31,14 @@ anyhow      = "1"
 thiserror   = "2"
 clap        = { version = "4", features = ["derive"] }
 
+[features]
+# Enables `spawn_in_tempfile` helper for integration tests. Off in release builds.
+test-support = ["dep:tempfile"]
+
+[dependencies.tempfile]
+version = "3"
+optional = true
+
 # Windows-only GUI stack (eframe/egui/tray-icon all pull GTK on Linux via wayland/wgpu):
 [target.'cfg(windows)'.dependencies]
 eframe      = "0.31"
@@ -39,6 +47,11 @@ egui_plot   = "0.31"
 tray-icon   = "0.24"
 ferrisetw   = "1.2"
 windows     = { version = "0.58", features = ["Win32_System_Threading","Win32_System_SystemInformation","Win32_Foundation"] }
+
+[dev-dependencies]
+# Pull in `tempfile` via the test-support feature so the lib's test helper
+# (`spawn_in_tempfile`) can use it.
+bandwith = { path = ".", features = ["test-support"] }
 
 [profile.release]
 opt-level = 3

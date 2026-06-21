@@ -508,6 +508,7 @@ name = "bandwith"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bandwith",
  "clap",
  "crossbeam-channel",
  "dirs",
@@ -520,6 +521,7 @@ dependencies = [
  "parking_lot",
  "rusqlite",
  "serde",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "toml",
