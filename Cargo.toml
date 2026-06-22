@@ -46,7 +46,7 @@ egui        = "0.31"
 egui_plot   = "0.31"
 tray-icon   = "0.24"
 ferrisetw   = "1.2"
-windows     = { version = "0.58", features = ["Win32_System_Threading","Win32_System_SystemInformation","Win32_Foundation"] }
+windows     = { version = "0.58", features = ["Win32_System_Threading","Win32_System_SystemInformation","Win32_System_ProcessStatus","Win32_Foundation"] }
 
 [dev-dependencies]
 # Pull in `tempfile` via the test-support feature so the lib's test helper

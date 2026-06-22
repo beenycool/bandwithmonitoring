@@ -44,6 +44,7 @@ pub fn run(args: cli::Args) -> Result<()> {
 
 fn run_demo() -> Result<()> {
     use crate::capture::Proto;
+    use crate::dns::{Resolver, ResolverConfig2};
     use crate::paths::db_path;
     use crate::store::{spawn, Query, Row, WriterConfig};
     use std::net::Ipv4Addr;
@@ -99,6 +100,35 @@ fn run_demo() -> Result<()> {
         });
     }
 
+    // Phase 3 sanity check: feed events through the aggregator and verify
+    // they end up in the DB. Runs BEFORE shutdown so the rows hit the writer
+    // through the same channel as the 1000 rows above.
+    use crate::capture::flow::FlowAggregator;
+    use crate::capture::{ConnEvent, Direction};
+    use std::net::IpAddr;
+    let mut agg = FlowAggregator::new();
+    for i in 0..10 {
+        agg.observe(ConnEvent {
+            ts_ms: now_ms,
+            pid: 9000,
+            proto: Proto::Tcp,
+            remote_ip: IpAddr::V4(std::net::Ipv4Addr::new(8, 8, 8, 8)),
+            remote_port: 443,
+            bytes: 1000,
+            direction: if i % 2 == 0 {
+                Direction::In
+            } else {
+                Direction::Out
+            },
+        });
+    }
+    agg.update_proc_name(9000, "demo_proc.exe".to_string());
+    let flushed = agg.flush_now(&handle);
+    println!(
+        "\n[phase 3] aggregator flushed {} rows through the writer",
+        flushed
+    );
+
     handle.flush();
     handle.shutdown()?;
 
@@ -123,6 +153,28 @@ fn run_demo() -> Result<()> {
             "  {:30} in={:>10} out={:>10}",
             row.key, row.bytes_in, row.bytes_out
         );
+    }
+
+    let top = q.top_processes(now_ms - 60_000, 5)?;
+    let demo_row = top.iter().find(|r| r.key == "demo_proc.exe");
+    assert!(demo_row.is_some(), "aggregator row should be in DB");
+    println!("[phase 3] verified: demo_proc.exe in top_processes");
+
+    {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        let _guard = rt.enter();
+        let (resolver, mut results) = Resolver::spawn(ResolverConfig2::default(), rt.handle())?;
+        resolver.request("1.1.1.1".parse().unwrap());
+        let _ = rt.block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(5), results.recv()).await
+        });
+        let name = resolver.cached_name("1.1.1.1".parse().unwrap());
+        match name {
+            Some(n) => println!("[phase 5] resolved 1.1.1.1 -> {}", n),
+            None => println!("[phase 5] no cached name for 1.1.1.1 (network offline?)"),
+        }
     }
 
     Ok(())

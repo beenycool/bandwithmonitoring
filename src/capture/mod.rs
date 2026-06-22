@@ -57,3 +57,15 @@ pub struct ConnEvent {
     pub bytes: u64,
     pub direction: Direction,
 }
+
+/// Current wall-clock time in unix milliseconds.
+///
+/// Falls back to `0` if the system clock is before the unix epoch
+/// (which would be a system misconfiguration).
+pub fn now_ms() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
