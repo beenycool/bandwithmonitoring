@@ -25,6 +25,10 @@ pub fn run(args: cli::Args) -> Result<()> {
         .with(tracing_subscriber::fmt::layer().with_target(false))
         .try_init();
 
+    std::panic::set_hook(Box::new(|info| {
+        tracing::error!(panic = %info, "thread panicked");
+    }));
+
     tracing::info!(version = VERSION, ?args, "bandwith starting");
 
     if let Some(cmd) = args.command {
@@ -109,7 +113,9 @@ fn run_query(cmd: cli::QueryCmd) -> Result<()> {
 #[cfg(windows)]
 fn run_headless() -> Result<()> {
     use crate::capture::flow::FlowAggregator;
+    use crate::capture::process::ProcessCache;
     use crate::capture::EtwCapture;
+    use crate::dns::{Resolver, ResolverConfig2};
     use crate::paths::db_path;
     use crate::store::{spawn, WriterConfig};
     use crossbeam_channel::bounded;
@@ -125,27 +131,51 @@ fn run_headless() -> Result<()> {
 
     let etw = EtwCapture::new()?;
 
-    // Shutdown signal: flipped to `true` either by the optional
-    // BANDWITH_HEADLESS_SECS timer (CI smoke tests) or by a future
-    // Ctrl-C handler. Interactive runs never set it — the process is
-    // terminated externally.
     let shutdown = Arc::new(AtomicBool::new(false));
 
-    // Aggregator thread: receives events, observes them, and flushes
-    // accumulated deltas to the writer every 2s.
     let handle_for_agg = handle.clone();
     let agg_thread = std::thread::Builder::new()
         .name("bandwith-aggregator".into())
         .spawn(move || {
+            let dns_rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build DNS runtime");
+            let (resolver, mut dns_rx) = Resolver::spawn(
+                ResolverConfig2::default(),
+                dns_rt.handle(),
+            ).expect("failed to spawn DNS resolver");
+
             let mut agg = FlowAggregator::new();
+            let mut proc_cache = ProcessCache::new();
+            let _ = proc_cache.refresh();
+
             loop {
+                dns_rt.block_on(async {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                });
+                while let Ok(result) = dns_rx.try_recv() {
+                    if let Some(name) = result.name {
+                        agg.update_domain(result.ip, name);
+                    }
+                }
+
                 match rx.recv_timeout(Duration::from_secs(2)) {
-                    Ok(ev) => agg.observe(ev),
+                    Ok(ev) => {
+                        resolver.request(ev.remote_ip);
+                        agg.observe(ev);
+                    }
                     Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                        if let Ok(()) = proc_cache.refresh() {
+                            agg.update_proc_names(proc_cache.snapshot_map());
+                        }
                         agg.maybe_flush(&handle_for_agg);
                     }
                     Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
                         tracing::info!("aggregator: event channel closed, flushing and exiting");
+                        if let Ok(()) = proc_cache.refresh() {
+                            agg.update_proc_names(proc_cache.snapshot_map());
+                        }
                         agg.flush_now(&handle_for_agg);
                         return;
                     }
@@ -153,7 +183,6 @@ fn run_headless() -> Result<()> {
             }
         })?;
 
-    // ETW capture thread: blocks for the lifetime of the trace.
     let etw_shutdown = shutdown.clone();
     let etw_thread = std::thread::Builder::new()
         .name("bandwith-etw".into())
@@ -163,9 +192,6 @@ fn run_headless() -> Result<()> {
             }
         })?;
 
-    // Optional auto-shutdown for CI / reproducible end-to-end runs.
-    // If BANDWITH_HEADLESS_SECS is set, signal the ETW thread to stop
-    // after that many seconds. Real users never set this env var.
     let shutdown_timer = std::thread::Builder::new()
         .name("bandwith-shutdown-signal".into())
         .spawn(move || {
@@ -191,9 +217,6 @@ fn run_headless() -> Result<()> {
             shutdown.store(true, Ordering::Relaxed);
         })?;
 
-    // Block on the ETW thread. In interactive mode the signal is never
-    // set and the process is terminated externally (Ctrl-C / Task
-    // Manager). A graceful Ctrl-C handler is a follow-up.
     let _ = etw_thread.join();
     let _ = agg_thread.join();
     let _ = shutdown_timer.join();

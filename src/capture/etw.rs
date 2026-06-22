@@ -90,6 +90,8 @@ impl EtwCapture {
         let proc_cache = Arc::new(Mutex::new(self.proc_cache));
         spawn_proc_refresh(proc_cache.clone());
 
+        let session_name = format!("bandwith-etw-{}-{}", std::process::id(), now_ms());
+
         let provider = Provider::by_guid(KERNEL_NETWORK_GUID)
             .add_callback(
                 move |record: &EventRecord, schema_locator: &SchemaLocator| {
@@ -99,24 +101,28 @@ impl EtwCapture {
             .build();
 
         let trace = UserTrace::new()
-            .named(format!("bandwith-etw-{}-{}", std::process::id(), now_ms()))
+            .named(session_name.clone())
             .enable(provider)
-            .start_and_process()
+            .start()
             .map_err(|e| anyhow::anyhow!("ETW start failed: {:?}", e))?;
 
         tracing::info!("ETW trace started; capturing network events");
 
-        // Poll the shutdown signal. When the caller sets it, stop the
-        // trace cleanly and return. In the typical interactive case the
-        // signal is never set and the process is terminated externally
-        // (Ctrl-C / Task Manager), at which point `trace`'s `Drop` runs.
-        while !shutdown.load(Ordering::Relaxed) {
-            std::thread::sleep(Duration::from_millis(200));
-        }
-        tracing::info!("ETW shutdown signal received, stopping trace");
-        if let Err(e) = trace.stop() {
-            tracing::warn!(error = ?e, "ETW stop failed");
-        }
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                if let Err(e) = trace.process() {
+                    tracing::error!(error = ?e, "ETW process thread failed");
+                }
+            });
+
+            while !shutdown.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(200));
+            }
+
+            tracing::info!("ETW shutdown signal received, stopping trace");
+            stop_etw_session(&session_name);
+        });
+
         tracing::info!(
             callbacks_received = CALLBACKS_RECEIVED.load(Ordering::Relaxed),
             callbacks_parsed = CALLBACKS_PARSED.load(Ordering::Relaxed),
@@ -125,6 +131,40 @@ impl EtwCapture {
             "ETW session ended"
         );
         Ok(())
+    }
+}
+
+/// Stop an ETW session by name using [`ControlTraceW`] with
+/// `EVENT_TRACE_CONTROL_STOP`. This is needed because `ferrisetw`'s `stop()`
+/// takes ownership which we can't do while `process()` is borrowing.
+fn stop_etw_session(session_name: &str) {
+    use windows::Win32::System::Diagnostics::Etw::{
+        ControlTraceW, EVENT_TRACE_CONTROL_STOP, EVENT_TRACE_PROPERTIES,
+    };
+
+    let prop_size = std::mem::size_of::<EVENT_TRACE_PROPERTIES>() + 1024;
+    let mut buf = vec![0u8; prop_size];
+
+    let name_wide: Vec<u16> = session_name
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+
+    unsafe {
+        let props = buf.as_mut_ptr() as *mut EVENT_TRACE_PROPERTIES;
+        (*props).Wnode.BufferSize = prop_size as u32;
+        (*props).LoggerNameOffset = std::mem::size_of::<EVENT_TRACE_PROPERTIES>() as u32;
+
+        let status = ControlTraceW(
+            0,
+            windows::core::PCWSTR(name_wide.as_ptr()),
+            props,
+            EVENT_TRACE_CONTROL_STOP,
+        );
+
+        if status != 0 && status != 4201 {
+            tracing::warn!(status, "ControlTraceW stop returned non-zero status");
+        }
     }
 }
 
