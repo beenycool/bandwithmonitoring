@@ -54,19 +54,31 @@ fn run_query(cmd: cli::QueryCmd) -> Result<()> {
             let rows = q.top_processes(now_ms - last * 1000, limit)?;
             println!("Top {} processes (last {}s):", rows.len().min(limit), last);
             for r in rows {
-                println!("  {:30} in={:>12} out={:>12}", r.key, r.bytes_in, r.bytes_out);
+                println!(
+                    "  {:30} in={:>12} out={:>12}",
+                    r.key, r.bytes_in, r.bytes_out
+                );
             }
         }
         QueryCmd::TopDomains { last, limit } => {
             let rows = q.top_domains(now_ms - last * 1000, limit)?;
             println!("Top {} domains (last {}s):", rows.len().min(limit), last);
             for r in rows {
-                println!("  {:30} in={:>12} out={:>12}", r.key, r.bytes_in, r.bytes_out);
+                println!(
+                    "  {:30} in={:>12} out={:>12}",
+                    r.key, r.bytes_in, r.bytes_out
+                );
             }
         }
         QueryCmd::Totals { last } => {
             let (bin, bout) = q.total_since(now_ms - last * 1000)?;
-            println!("Last {}s: in={} out={} total={}", last, bin, bout, bin + bout);
+            println!(
+                "Last {}s: in={} out={} total={}",
+                last,
+                bin,
+                bout,
+                bin + bout
+            );
         }
         QueryCmd::Stats => {
             let count = q.count()?;
@@ -103,10 +115,8 @@ fn run_headless() -> Result<()> {
     let dns_rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    let (resolver, dns_rx) = crate::dns::Resolver::spawn(
-        crate::dns::ResolverConfig2::default(),
-        dns_rt.handle(),
-    )?;
+    let (resolver, dns_rx) =
+        crate::dns::Resolver::spawn(crate::dns::ResolverConfig2::default(), dns_rt.handle())?;
 
     let handle_for_agg = handle.clone();
     let resolver_for_agg = resolver.clone();
@@ -116,7 +126,7 @@ fn run_headless() -> Result<()> {
             let mut agg = FlowAggregator::new();
             let mut proc_cache = ProcessCache::new();
             let mut dns_rx = dns_rx;
-            
+
             if let Err(e) = proc_cache.refresh() {
                 tracing::warn!(error = %e, "initial process snapshot failed");
             }
@@ -192,7 +202,7 @@ fn run_headless() -> Result<()> {
     tracing::info!("ETW thread joined. Stopping aggregator...");
     let _ = agg_thread.join();
     let _ = shutdown_timer.join();
-    
+
     tracing::info!("Shutting down DB writer...");
     handle.shutdown()?;
     tracing::info!("headless: clean shutdown");
@@ -218,22 +228,35 @@ fn run_demo() -> Result<()> {
     tracing::info!(?db, "demo: writing 1000 fake rows");
     let handle = spawn(&db, WriterConfig::default())?;
 
-    let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64;
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
 
     let procs = ["chrome.exe", "powershell.exe", "firefox.exe", "code.exe"];
-    let domains = ["cloudflare.com", "google.com", "github.com", "stackoverflow.com", "rust-lang.org"];
+    let domains = [
+        "cloudflare.com",
+        "google.com",
+        "github.com",
+        "stackoverflow.com",
+        "rust-lang.org",
+    ];
     let mut rng_state: u64 = 0x9E3779B97F4A7C15;
 
     for i in 0..1000 {
-        rng_state ^= rng_state << 13; rng_state ^= rng_state >> 7; rng_state ^= rng_state << 17;
+        rng_state ^= rng_state << 13;
+        rng_state ^= rng_state >> 7;
+        rng_state ^= rng_state << 17;
         let r1 = rng_state;
-        rng_state ^= rng_state << 13; rng_state ^= rng_state >> 7; rng_state ^= rng_state << 17;
+        rng_state ^= rng_state << 13;
+        rng_state ^= rng_state >> 7;
+        rng_state ^= rng_state << 17;
         let r2 = rng_state;
 
         let proc = procs[(r1 >> 32) as usize % procs.len()];
         let domain = domains[(r1 as usize) % domains.len()];
         let ip = Ipv4Addr::new(142, 250, (r2 >> 32) as u8, r2 as u8);
-        
+
         handle.submit(Row {
             ts: now_ms - (1000 - i) * 10,
             pid: 1000 + (r1 as u32 % 100),
@@ -259,27 +282,44 @@ fn run_demo() -> Result<()> {
             remote_ip: IpAddr::V4(std::net::Ipv4Addr::new(8, 8, 8, 8)),
             remote_port: 443,
             bytes: 1000,
-            direction: if i % 2 == 0 { Direction::In } else { Direction::Out },
+            direction: if i % 2 == 0 {
+                Direction::In
+            } else {
+                Direction::Out
+            },
         });
     }
     agg.update_proc_name(9000, "demo_proc.exe".to_string());
     let flushed = agg.flush_now(&handle);
-    println!("\n[phase 3] aggregator flushed {} rows through the writer", flushed);
+    println!(
+        "\n[phase 3] aggregator flushed {} rows through the writer",
+        flushed
+    );
 
     handle.flush();
     handle.shutdown()?;
 
     let q = Query::open(&db)?;
     let total = q.total_since(now_ms - 60_000)?;
-    tracing::info!(bytes_in = total.0, bytes_out = total.1, "demo: total bytes last 60s");
+    tracing::info!(
+        bytes_in = total.0,
+        bytes_out = total.1,
+        "demo: total bytes last 60s"
+    );
 
     println!("Top 5 domains (last 60s):");
     for row in q.top_domains(now_ms - 60_000, 5)? {
-        println!("  {:30} in={:>10} out={:>10}", row.key, row.bytes_in, row.bytes_out);
+        println!(
+            "  {:30} in={:>10} out={:>10}",
+            row.key, row.bytes_in, row.bytes_out
+        );
     }
     println!("\nTop 5 processes (last 60s):");
     for row in q.top_processes(now_ms - 60_000, 5)? {
-        println!("  {:30} in={:>10} out={:>10}", row.key, row.bytes_in, row.bytes_out);
+        println!(
+            "  {:30} in={:>10} out={:>10}",
+            row.key, row.bytes_in, row.bytes_out
+        );
     }
 
     let top = q.top_processes(now_ms - 60_000, 5)?;
@@ -288,7 +328,9 @@ fn run_demo() -> Result<()> {
     println!("[phase 3] verified: demo_proc.exe in top_processes");
 
     {
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
         let _guard = rt.enter();
         let (resolver, mut results) = Resolver::spawn(ResolverConfig2::default(), rt.handle())?;
         resolver.request("1.1.1.1".parse().unwrap());
