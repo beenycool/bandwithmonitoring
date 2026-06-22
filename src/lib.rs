@@ -32,7 +32,7 @@ pub fn run(args: cli::Args) -> Result<()> {
     }
 
     if args.headless {
-        return run_headless();
+        return run_headless(args.shutdown_after);
     }
 
     // Phase 1 stub: don't open a window yet, just return.
@@ -46,13 +46,28 @@ pub fn run(args: cli::Args) -> Result<()> {
 /// and the SQLite writer (phase 3). On non-Windows hosts this returns
 /// `Err` — the headless mode is Windows-only by design.
 #[cfg(windows)]
-fn run_headless() -> Result<()> {
+fn run_headless(shutdown_after: Option<u64>) -> Result<()> {
     use crate::capture::flow::FlowAggregator;
     use crate::capture::EtwCapture;
     use crate::paths::db_path;
     use crate::store::{spawn, WriterConfig};
     use crossbeam_channel::bounded;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
     use std::time::Duration;
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+
+    if let Some(secs) = shutdown_after {
+        let sig = shutdown.clone();
+        std::thread::Builder::new()
+            .name("bandwith-shutdown-timer".into())
+            .spawn(move || {
+                std::thread::sleep(Duration::from_secs(secs));
+                tracing::info!(secs, "shutdown timer expired, signalling ETW trace");
+                sig.store(true, Ordering::Relaxed);
+            })?;
+    }
 
     let db = db_path();
     tracing::info!(?db, "headless: starting capture pipeline");
@@ -85,18 +100,21 @@ fn run_headless() -> Result<()> {
         })?;
 
     // ETW capture thread: blocks for the lifetime of the trace.
+    let tx_etw = tx.clone();
+    let etw_shutdown = shutdown.clone();
     let etw_thread = std::thread::Builder::new()
         .name("bandwith-etw".into())
         .spawn(move || {
-            if let Err(e) = etw.run(tx) {
+            if let Err(e) = etw.run(tx_etw, etw_shutdown) {
                 tracing::error!(error = %e, "ETW capture failed");
             }
         })?;
 
-    // Block on the ETW thread. Shutdown happens when the user kills the
-    // process (Ctrl-C in the terminal / Task Manager). A graceful Ctrl-C
-    // handler is a follow-up.
+    // Block on the ETW thread. Shutdown happens when the process is killed or
+    // the shutdown timer (--shutdown-after) fires.
     let _ = etw_thread.join();
+    // Drop tx so the aggregator thread sees the disconnect and exits.
+    drop(tx);
     let _ = agg_thread.join();
     handle.shutdown()?;
     tracing::info!("headless: clean shutdown");
@@ -104,7 +122,7 @@ fn run_headless() -> Result<()> {
 }
 
 #[cfg(not(windows))]
-fn run_headless() -> Result<()> {
+fn run_headless(_shutdown_after: Option<u64>) -> Result<()> {
     anyhow::bail!("--headless mode is Windows-only (requires ETW)")
 }
 

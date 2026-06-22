@@ -18,6 +18,7 @@
 
 #![cfg(windows)]
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -71,7 +72,7 @@ impl EtwCapture {
     /// on process exit) cleanly stops the kernel session. All parsed events
     /// are forwarded to `tx`; the aggregator / writer pipeline is driven by
     /// the caller.
-    pub fn run(self, tx: Sender<ConnEvent>) -> anyhow::Result<()> {
+    pub fn run(self, tx: Sender<ConnEvent>, shutdown: Arc<AtomicBool>) -> anyhow::Result<()> {
         let proc_cache = Arc::new(Mutex::new(self.proc_cache));
         spawn_proc_refresh(proc_cache.clone());
 
@@ -84,18 +85,18 @@ impl EtwCapture {
             .build();
 
         let _trace = UserTrace::new()
-            .named("bandwith-etw".to_string())
+            .named("bandwith-etw".into())
             .enable(provider)
             .start_and_process()
             .map_err(|e| anyhow::anyhow!("ETW start failed: {:?}", e))?;
 
         tracing::info!("ETW trace started; capturing network events");
 
-        // Block the calling thread until the process is terminated. On
-        // termination, the `_trace` Drop stops the kernel session.
-        loop {
-            std::thread::sleep(Duration::from_secs(60));
+        while !shutdown.load(Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_secs(1));
         }
+        tracing::info!("ETW trace: shutdown signal received, stopping");
+        Ok(())
     }
 }
 
