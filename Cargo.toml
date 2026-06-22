@@ -46,7 +46,7 @@ egui        = "0.31"
 egui_plot   = "0.31"
 tray-icon   = "0.24"
 ferrisetw   = "1.2"
-windows     = { version = "0.58", features = ["Win32_System_Threading","Win32_System_SystemInformation","Win32_System_ProcessStatus","Win32_Foundation","Win32_System_Diagnostics_Etw"] }
+windows     = { version = "0.58", features = ["Win32_System_Threading","Win32_System_SystemInformation","Win32_System_ProcessStatus","Win32_Foundation", "Win32_System_Diagnostics_Etw"] }
 
 [dev-dependencies]
 # Pull in `tempfile` via the test-support feature so the lib's test helper
@@ -58,6 +58,7 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
+# panic = "abort" <- REMOVED! This was hiding panics in the ETW thread.
 
 [profile.dev]
 opt-level = 0
