@@ -19,7 +19,7 @@ use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
 use std::path::PathBuf;
 
-use windows::Win32::Foundation::{CloseHandle, HANDLE};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, HMODULE};
 use windows::Win32::System::ProcessStatus::{EnumProcesses, K32GetModuleFileNameExW};
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION,
@@ -165,7 +165,7 @@ unsafe fn query_process_name_with_handle(handle: HANDLE) -> Option<String> {
     }
     // Fall back to K32GetModuleFileNameExW (older API, still in psapi).
     let mut buf: Vec<u16> = vec![0u16; 1024];
-    let copied = K32GetModuleFileNameExW(handle, HANDLE::default(), &mut buf) as usize;
+    let copied = K32GetModuleFileNameExW(handle, HMODULE::default(), &mut buf) as usize;
     if copied == 0 {
         return None;
     }
