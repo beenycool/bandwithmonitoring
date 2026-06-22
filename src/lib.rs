@@ -27,6 +27,10 @@ pub fn run(args: cli::Args) -> Result<()> {
 
     tracing::info!(version = VERSION, ?args, "bandwith starting");
 
+    if let Some(cmd) = args.command {
+        return run_query(cmd);
+    }
+
     if args.demo {
         return run_demo();
     }
@@ -37,6 +41,63 @@ pub fn run(args: cli::Args) -> Result<()> {
 
     // Phase 1 stub: don't open a window yet, just return.
     tracing::info!("GUI not yet implemented in phase 1");
+    Ok(())
+}
+
+/// `bandwith --query ...`: read-side queries against the on-disk DB.
+///
+/// Lets users verify what was captured without installing `sqlite3.exe`.
+fn run_query(cmd: cli::QueryCmd) -> Result<()> {
+    use crate::cli::QueryCmd;
+    use crate::paths::db_path;
+    use crate::store::Query;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let db = db_path();
+    let q = Query::open(&db)?;
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+
+    match cmd {
+        QueryCmd::TopProcesses { last, limit } => {
+            let rows = q.top_processes(now_ms - last * 1000, limit)?;
+            println!("Top {} processes (last {}s):", rows.len().min(limit), last);
+            for r in rows {
+                println!(
+                    "  {:30} in={:>12} out={:>12}",
+                    r.key, r.bytes_in, r.bytes_out
+                );
+            }
+        }
+        QueryCmd::TopDomains { last, limit } => {
+            let rows = q.top_domains(now_ms - last * 1000, limit)?;
+            println!("Top {} domains (last {}s):", rows.len().min(limit), last);
+            for r in rows {
+                println!(
+                    "  {:30} in={:>12} out={:>12}",
+                    r.key, r.bytes_in, r.bytes_out
+                );
+            }
+        }
+        QueryCmd::Totals { last } => {
+            let (bin, bout) = q.total_since(now_ms - last * 1000)?;
+            println!(
+                "Last {}s: in={} out={} total={}",
+                last,
+                bin,
+                bout,
+                bin + bout
+            );
+        }
+        QueryCmd::Stats => {
+            let count = q.count()?;
+            let size = std::fs::metadata(&db).map(|m| m.len()).unwrap_or(0);
+            println!("Rows: {}", count);
+            println!("DB:   {} ({} bytes)", db.display(), size);
+        }
+    }
     Ok(())
 }
 

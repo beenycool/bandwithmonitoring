@@ -18,7 +18,7 @@
 
 #![cfg(windows)]
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -31,7 +31,7 @@ use ferrisetw::EventRecord;
 use parking_lot::Mutex;
 
 use crate::capture::process::ProcessCache;
-use crate::capture::{ConnEvent, Direction, Proto};
+use crate::capture::{now_ms, ConnEvent, Direction, Proto};
 
 /// GUID for `Microsoft-Windows-Kernel-Network` (manifest-based kernel provider).
 /// No braces — `windows-core` GUID parser is strict (RFC 4122 canonical form).
@@ -50,6 +50,19 @@ const EVENT_TCP_RECV_V6: u16 = 31;
 
 /// How often the background process cache is refreshed.
 const PROC_REFRESH_INTERVAL: Duration = Duration::from_secs(10);
+
+// --- Diagnostic counters ---------------------------------------------------
+//
+// These are the only signal we get on Windows when a field name in the
+// manifest has drifted, the event schema is empty, or the parser barfs on
+// a property. They're `static` so the closure-based callback (which has
+// no captured `&mut`) can bump them, and `AtomicU64::Relaxed` is fine —
+// we only care about the final values logged at session end.
+
+static CALLBACKS_RECEIVED: AtomicU64 = AtomicU64::new(0);
+static CALLBACKS_PARSED: AtomicU64 = AtomicU64::new(0);
+static CALLBACKS_PARSE_FAILED: AtomicU64 = AtomicU64::new(0);
+static CALLBACKS_SKIPPED_EVENT_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Public capture handle. Owns the process cache and runs the ETW session.
 pub struct EtwCapture {
@@ -86,7 +99,7 @@ impl EtwCapture {
             .build();
 
         let trace = UserTrace::new()
-            .named("bandwith-etw".to_string())
+            .named(format!("bandwith-etw-{}-{}", std::process::id(), now_ms()))
             .enable(provider)
             .start_and_process()
             .map_err(|e| anyhow::anyhow!("ETW start failed: {:?}", e))?;
@@ -104,6 +117,13 @@ impl EtwCapture {
         if let Err(e) = trace.stop() {
             tracing::warn!(error = ?e, "ETW stop failed");
         }
+        tracing::info!(
+            callbacks_received = CALLBACKS_RECEIVED.load(Ordering::Relaxed),
+            callbacks_parsed = CALLBACKS_PARSED.load(Ordering::Relaxed),
+            callbacks_parse_failed = CALLBACKS_PARSE_FAILED.load(Ordering::Relaxed),
+            callbacks_skipped_event_id = CALLBACKS_SKIPPED_EVENT_ID.load(Ordering::Relaxed),
+            "ETW session ended"
+        );
         Ok(())
     }
 }
@@ -128,18 +148,24 @@ fn spawn_proc_refresh(cache: Arc<Mutex<ProcessCache>>) {
 /// One event handler. All errors are swallowed (logged at debug) so a
 /// single malformed event never kills the trace.
 fn handle_event(record: &EventRecord, schema_locator: &SchemaLocator, tx: &Sender<ConnEvent>) {
+    let _ = CALLBACKS_RECEIVED.fetch_add(1, Ordering::Relaxed);
     let event_id = record.event_id();
+    tracing::debug!(event_id, "ETW event received");
     let (proto, direction) = match event_id {
         EVENT_TCP_SEND | EVENT_TCP_SEND_V6 => (Proto::Tcp, Direction::Out),
         EVENT_TCP_RECV | EVENT_TCP_RECV_V6 => (Proto::Tcp, Direction::In),
         EVENT_UDP_SEND | EVENT_UDP_SEND_V6 => (Proto::Udp, Direction::Out),
         EVENT_UDP_RECV | EVENT_UDP_RECV_V6 => (Proto::Udp, Direction::In),
-        _ => return,
+        _ => {
+            let _ = CALLBACKS_SKIPPED_EVENT_ID.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
     };
 
     let schema = match schema_locator.event_schema(record) {
         Ok(s) => s,
         Err(e) => {
+            let _ = CALLBACKS_PARSE_FAILED.fetch_add(1, Ordering::Relaxed);
             tracing::debug!(error = ?e, event_id, "schema lookup failed");
             return;
         }
@@ -151,19 +177,31 @@ fn handle_event(record: &EventRecord, schema_locator: &SchemaLocator, tx: &Sende
     let pid: u32 = parser
         .try_parse("PID")
         .unwrap_or_else(|_| record.process_id());
-    let bytes: u32 = parser.try_parse("size").unwrap_or(0);
+    let bytes: u32 = match parser.try_parse("size") {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = CALLBACKS_PARSE_FAILED.fetch_add(1, Ordering::Relaxed);
+            tracing::debug!(error = %e, event_id, "size parse failed");
+            return;
+        }
+    };
 
     let dport: u16 = match parser.try_parse("dport") {
         Ok(v) => v,
-        Err(_) => return,
+        Err(e) => {
+            let _ = CALLBACKS_PARSE_FAILED.fetch_add(1, Ordering::Relaxed);
+            tracing::debug!(error = %e, event_id, "dport parse failed");
+            return;
+        }
     };
 
     // daddr is a length-prefixed byte array: 4 bytes for IPv4, 16 for IPv6
     // (including IPv4-mapped IPv6). Length varies by event version.
     let daddr_bytes = match parser.try_parse::<Vec<u8>>("daddr") {
         Ok(b) => b,
-        Err(_) => {
-            tracing::debug!(event_id, "daddr parse failed");
+        Err(e) => {
+            let _ = CALLBACKS_PARSE_FAILED.fetch_add(1, Ordering::Relaxed);
+            tracing::debug!(error = %e, event_id, "daddr parse failed");
             return;
         }
     };
@@ -198,6 +236,7 @@ fn handle_event(record: &EventRecord, schema_locator: &SchemaLocator, tx: &Sende
         direction,
     };
 
+    let _ = CALLBACKS_PARSED.fetch_add(1, Ordering::Relaxed);
     if tx.send(ev).is_err() {
         tracing::warn!("receiver dropped, stopping event processing");
     }
