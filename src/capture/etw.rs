@@ -9,6 +9,7 @@ use crossbeam_channel::Sender;
 use ferrisetw::parser::Parser;
 use ferrisetw::provider::Provider;
 use ferrisetw::schema_locator::SchemaLocator;
+use ferrisetw::trace::TraceTrait;
 use ferrisetw::trace::UserTrace;
 use ferrisetw::EventRecord;
 use parking_lot::Mutex;
