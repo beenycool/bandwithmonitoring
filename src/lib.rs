@@ -100,11 +100,12 @@ fn run_headless(shutdown_after: Option<u64>) -> Result<()> {
         })?;
 
     // ETW capture thread: blocks for the lifetime of the trace.
+    let tx_etw = tx.clone();
     let etw_shutdown = shutdown.clone();
     let etw_thread = std::thread::Builder::new()
         .name("bandwith-etw".into())
         .spawn(move || {
-            if let Err(e) = etw.run(tx, etw_shutdown) {
+            if let Err(e) = etw.run(tx_etw, etw_shutdown) {
                 tracing::error!(error = %e, "ETW capture failed");
             }
         })?;

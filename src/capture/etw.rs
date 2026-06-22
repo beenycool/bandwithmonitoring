@@ -98,6 +98,7 @@ impl EtwCapture {
             std::thread::sleep(Duration::from_secs(1));
         }
         tracing::info!("ETW trace: shutdown signal received, stopping");
+        Ok(())
     }
 }
 
