@@ -26,6 +26,7 @@ use crossbeam_channel::Sender;
 use ferrisetw::parser::Parser;
 use ferrisetw::provider::Provider;
 use ferrisetw::schema_locator::SchemaLocator;
+use ferrisetw::trace::TraceTrait;
 use ferrisetw::trace::UserTrace;
 use ferrisetw::EventRecord;
 use parking_lot::Mutex;
@@ -100,7 +101,7 @@ impl EtwCapture {
             )
             .build();
 
-        let trace = UserTrace::new()
+        let (trace, handle) = UserTrace::new()
             .named(session_name.clone())
             .enable(provider)
             .start()
@@ -110,7 +111,7 @@ impl EtwCapture {
 
         std::thread::scope(|s| {
             s.spawn(|| {
-                if let Err(e) = trace.process() {
+                if let Err(e) = TraceTrait::process_from_handle(handle) {
                     tracing::error!(error = ?e, "ETW process thread failed");
                 }
             });
@@ -120,7 +121,9 @@ impl EtwCapture {
             }
 
             tracing::info!("ETW shutdown signal received, stopping trace");
-            stop_etw_session(&session_name);
+            if let Err(e) = trace.stop() {
+                tracing::warn!(error = ?e, "failed to stop ETW trace");
+            }
         });
 
         tracing::info!(
@@ -131,40 +134,6 @@ impl EtwCapture {
             "ETW session ended"
         );
         Ok(())
-    }
-}
-
-/// Stop an ETW session by name using [`ControlTraceW`] with
-/// `EVENT_TRACE_CONTROL_STOP`. This is needed because `ferrisetw`'s `stop()`
-/// takes ownership which we can't do while `process()` is borrowing.
-fn stop_etw_session(session_name: &str) {
-    use windows::Win32::System::Diagnostics::Etw::{
-        ControlTraceW, EVENT_TRACE_CONTROL_STOP, EVENT_TRACE_PROPERTIES,
-    };
-
-    let prop_size = std::mem::size_of::<EVENT_TRACE_PROPERTIES>() + 1024;
-    let mut buf = vec![0u8; prop_size];
-
-    let name_wide: Vec<u16> = session_name
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect();
-
-    unsafe {
-        let props = buf.as_mut_ptr() as *mut EVENT_TRACE_PROPERTIES;
-        (*props).Wnode.BufferSize = prop_size as u32;
-        (*props).LoggerNameOffset = std::mem::size_of::<EVENT_TRACE_PROPERTIES>() as u32;
-
-        let status = ControlTraceW(
-            0,
-            windows::core::PCWSTR(name_wide.as_ptr()),
-            props,
-            EVENT_TRACE_CONTROL_STOP,
-        );
-
-        if status != 0 && status != 4201 {
-            tracing::warn!(status, "ControlTraceW stop returned non-zero status");
-        }
     }
 }
 
