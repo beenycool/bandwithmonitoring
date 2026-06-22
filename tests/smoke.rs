@@ -20,14 +20,14 @@ fn cli_with_config_path() {
 
 #[test]
 fn run_headless_succeeds() {
-    // Use --shutdown-after so the test doesn't hang forever.
-    // On non-Windows, --headless returns Err (ETW is Windows-only).
-    let args = Args::parse_from(["bandwith", "--headless", "--shutdown-after", "4"]);
+    let args = Args::parse_from(["bandwith", "--headless"]);
     let result = bandwith::run(args);
+    // --headless is Windows-only (requires ETW). On non-Windows, run() returns
+    // Err. On Windows, it should succeed (we just want a clean exit code path).
     #[cfg(windows)]
     result.expect("headless run should succeed on Windows");
     #[cfg(not(windows))]
     {
-        let _ = result;
+        let _ = result; // suppress unused warning
     }
 }

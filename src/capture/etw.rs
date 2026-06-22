@@ -18,7 +18,6 @@
 
 #![cfg(windows)]
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -34,6 +33,7 @@ use crate::capture::process::ProcessCache;
 use crate::capture::{ConnEvent, Direction, Proto};
 
 /// GUID for `Microsoft-Windows-Kernel-Network` (manifest-based kernel provider).
+/// No braces — `windows-core` GUID parser is strict (RFC 4122 canonical form).
 pub const KERNEL_NETWORK_GUID: &str = "7DD42A49-5329-4832-8DFD-43D979153A88";
 
 // --- Event IDs (from netevent.h) ---------------------------------------------
@@ -64,14 +64,14 @@ impl EtwCapture {
         Ok(Self { proc_cache })
     }
 
-    /// Block until the ETW session is stopped or `shutdown` is signalled.
+    /// Block until the ETW session is stopped (e.g. user kills the process).
     ///
     /// Spawns the process-cache refresh loop and the ETW consumer thread,
     /// then parks the calling thread. The trace's `Drop` impl (which fires
     /// on process exit) cleanly stops the kernel session. All parsed events
     /// are forwarded to `tx`; the aggregator / writer pipeline is driven by
     /// the caller.
-    pub fn run(self, tx: Sender<ConnEvent>, shutdown: Arc<AtomicBool>) -> anyhow::Result<()> {
+    pub fn run(self, tx: Sender<ConnEvent>) -> anyhow::Result<()> {
         let proc_cache = Arc::new(Mutex::new(self.proc_cache));
         spawn_proc_refresh(proc_cache.clone());
 
@@ -91,14 +91,11 @@ impl EtwCapture {
 
         tracing::info!("ETW trace started; capturing network events");
 
-        // Block the calling thread until the process is terminated or
-        // `shutdown` is signalled. On termination, the `_trace` Drop stops
-        // the kernel session.
-        while !shutdown.load(Ordering::Relaxed) {
-            std::thread::sleep(Duration::from_secs(1));
+        // Block the calling thread until the process is terminated. On
+        // termination, the `_trace` Drop stops the kernel session.
+        loop {
+            std::thread::sleep(Duration::from_secs(60));
         }
-        tracing::info!("ETW trace: shutdown signal received, stopping");
-        Ok(())
     }
 }
 
