@@ -111,7 +111,7 @@ impl EtwCapture {
 
         std::thread::scope(|s| {
             s.spawn(|| {
-                if let Err(e) = TraceTrait::process_from_handle(handle) {
+                if let Err(e) = <UserTrace as TraceTrait>::process_from_handle(handle) {
                     tracing::error!(error = ?e, "ETW process thread failed");
                 }
             });
