@@ -6,7 +6,7 @@
 //! and the capture keeps running — a single malformed event must never kill
 //! the trace.
 //!
-//! Provider GUID: `{7DD42A49-5329-4832-8DFD-43D979153A88}` (per `netevent.h`).
+//! Provider GUID: `7DD42A49-5329-4832-8DFD-43D979153A88` (per `netevent.h`).
 //! Event ID layout (IPv4 unless suffixed with `V6`):
 //!   - 12 `TcpIpSend`, 13 `TcpIpRecv`
 //!   - 26 `UdpIpSend`, 27 `UdpIpRecv`
