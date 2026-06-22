@@ -61,7 +61,7 @@ impl EtwCapture {
             )
             .build();
 
-        let trace = UserTrace::new()
+        let (trace, _handle) = UserTrace::new()
             .named(session_name.clone())
             .enable(provider)
             .start()
@@ -96,8 +96,9 @@ impl EtwCapture {
 }
 
 fn stop_etw_session(session_name: &str) {
+    use windows::Win32::Foundation::WIN32_ERROR;
     use windows::Win32::System::Diagnostics::Etw::{
-        ControlTraceW, EVENT_TRACE_CONTROL_STOP, EVENT_TRACE_PROPERTIES,
+        ControlTraceW, CONTROLTRACE_HANDLE, EVENT_TRACE_CONTROL_STOP, EVENT_TRACE_PROPERTIES,
     };
 
     let prop_size = std::mem::size_of::<EVENT_TRACE_PROPERTIES>() + 1024;
@@ -114,14 +115,17 @@ fn stop_etw_session(session_name: &str) {
         (*props).LoggerNameOffset = std::mem::size_of::<EVENT_TRACE_PROPERTIES>() as u32;
 
         let status = ControlTraceW(
-            0,
+            CONTROLTRACE_HANDLE::default(),
             windows::core::PCWSTR(name_wide.as_ptr()),
             props,
             EVENT_TRACE_CONTROL_STOP,
         );
 
-        if status != 0 && status != 4201 {
-            tracing::warn!(status, "ControlTraceW stop returned non-zero status");
+        if status != WIN32_ERROR(0) && status != WIN32_ERROR(4201) {
+            tracing::warn!(
+                status_code = status.0,
+                "ControlTraceW stop returned non-zero status"
+            );
         }
     }
 }
