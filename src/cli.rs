@@ -17,4 +17,8 @@ pub struct Args {
     /// ~/.config/bandwith/config.toml elsewhere).
     #[arg(long)]
     pub config: Option<PathBuf>,
+
+    /// Automatically shut down headless mode after N seconds (useful for CI/testing).
+    #[arg(long)]
+    pub shutdown_after: Option<u64>,
 }
