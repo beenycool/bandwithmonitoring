@@ -33,7 +33,7 @@ use crate::capture::process::ProcessCache;
 use crate::capture::{ConnEvent, Direction, Proto};
 
 /// GUID for `Microsoft-Windows-Kernel-Network` (manifest-based kernel provider).
-pub const KERNEL_NETWORK_GUID: &str = "{7DD42A49-5329-4832-8DFD-43D979153A88}";
+pub const KERNEL_NETWORK_GUID: &str = "7DD42A49-5329-4832-8DFD-43D979153A88";
 
 // --- Event IDs (from netevent.h) ---------------------------------------------
 
