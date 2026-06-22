@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::System::ProcessStatus::{EnumProcesses, K32GetModuleFileNameExW};
 use windows::Win32::System::Threading::{
-    OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+    OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 
 /// One row in the process snapshot.
@@ -87,7 +87,7 @@ const INITIAL_PID_BUFFER_BYTES: usize = PID_BUFFER_CAPACITY * std::mem::size_of:
 
 unsafe fn snapshot_unsafe() -> anyhow::Result<Vec<ProcInfo>> {
     // Collect PIDs. We may need to retry if the buffer fills up.
-    let mut pids: Vec<u32> = Vec::new();
+    let pids;
     let mut buf_bytes = INITIAL_PID_BUFFER_BYTES;
     loop {
         let mut bytes_needed: u32 = 0;
@@ -137,7 +137,7 @@ unsafe fn snapshot_unsafe() -> anyhow::Result<Vec<ProcInfo>> {
 /// image path). Returns `None` on access denial or process exit.
 unsafe fn query_process_name(pid: u32) -> Option<String> {
     let handle: HANDLE = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
-    if handle.is_null() {
+    if handle.0.is_null() {
         return None;
     }
     let result = query_process_name_with_handle(handle);
@@ -149,7 +149,13 @@ unsafe fn query_process_name_with_handle(handle: HANDLE) -> Option<String> {
     // Prefer QueryFullProcessImageNameW — it gives the canonical path.
     let mut buf: Vec<u16> = vec![0u16; 1024];
     let mut size: u32 = buf.len() as u32;
-    let ok = QueryFullProcessImageNameW(handle, 0, buf.as_mut_ptr(), &mut size).is_ok();
+    let ok = QueryFullProcessImageNameW(
+        handle,
+        PROCESS_NAME_FORMAT(0),
+        windows::core::PWSTR(buf.as_mut_ptr()),
+        &mut size,
+    )
+    .is_ok();
     if ok && size > 0 {
         buf.truncate(size as usize);
         let path = PathBuf::from(OsString::from_wide(&buf));
@@ -159,7 +165,7 @@ unsafe fn query_process_name_with_handle(handle: HANDLE) -> Option<String> {
     }
     // Fall back to K32GetModuleFileNameExW (older API, still in psapi).
     let mut buf: Vec<u16> = vec![0u16; 1024];
-    let copied = K32GetModuleFileNameExW(Some(handle), None, &mut buf) as usize;
+    let copied = K32GetModuleFileNameExW(handle, HANDLE::default(), &mut buf) as usize;
     if copied == 0 {
         return None;
     }
