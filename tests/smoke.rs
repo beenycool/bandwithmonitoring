@@ -20,7 +20,7 @@ fn cli_with_config_path() {
 
 #[test]
 fn run_headless_succeeds() {
-    let args = Args::parse_from(["bandwith", "--headless", "--shutdown-after", "1"]);
+    let args = Args::parse_from(["bandwith", "--headless"]);
     let result = bandwith::run(args);
     // --headless is Windows-only (requires ETW). On non-Windows, run() returns
     // Err. On Windows, it should succeed (we just want a clean exit code path).

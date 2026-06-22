@@ -13,11 +13,6 @@ pub struct Args {
     #[arg(long)]
     pub demo: bool,
 
-    /// Graceful shutdown timeout in seconds (headless mode only).
-    /// After this many seconds the ETW capture stops and the process exits.
-    #[arg(long, value_name = "SECS")]
-    pub shutdown_after: Option<u64>,
-
     /// Path to config file (defaults to %APPDATA%/bandwith/config.toml on Windows,
     /// ~/.config/bandwith/config.toml elsewhere).
     #[arg(long)]

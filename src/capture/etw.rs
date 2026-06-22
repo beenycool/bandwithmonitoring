@@ -6,7 +6,7 @@
 //! and the capture keeps running — a single malformed event must never kill
 //! the trace.
 //!
-//! Provider GUID: `7DD42A49-5329-4832-8DFD-43D979153A88` (per `netevent.h`).
+//! Provider GUID: `{7DD42A49-5329-4832-8DFD-43D979153A88}` (per `netevent.h`).
 //! Event ID layout (IPv4 unless suffixed with `V6`):
 //!   - 12 `TcpIpSend`, 13 `TcpIpRecv`
 //!   - 26 `UdpIpSend`, 27 `UdpIpRecv`
@@ -18,7 +18,6 @@
 
 #![cfg(windows)]
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -72,7 +71,7 @@ impl EtwCapture {
     /// on process exit) cleanly stops the kernel session. All parsed events
     /// are forwarded to `tx`; the aggregator / writer pipeline is driven by
     /// the caller.
-    pub fn run(self, tx: Sender<ConnEvent>, shutdown: Arc<AtomicBool>) -> anyhow::Result<()> {
+    pub fn run(self, tx: Sender<ConnEvent>) -> anyhow::Result<()> {
         let proc_cache = Arc::new(Mutex::new(self.proc_cache));
         spawn_proc_refresh(proc_cache.clone());
 
@@ -85,18 +84,18 @@ impl EtwCapture {
             .build();
 
         let _trace = UserTrace::new()
-            .named("bandwith-etw".into())
+            .named("bandwith-etw".to_string())
             .enable(provider)
             .start_and_process()
             .map_err(|e| anyhow::anyhow!("ETW start failed: {:?}", e))?;
 
         tracing::info!("ETW trace started; capturing network events");
 
-        while !shutdown.load(Ordering::Relaxed) {
-            std::thread::sleep(Duration::from_secs(1));
+        // Block the calling thread until the process is terminated. On
+        // termination, the `_trace` Drop stops the kernel session.
+        loop {
+            std::thread::sleep(Duration::from_secs(60));
         }
-        tracing::info!("ETW trace: shutdown signal received, stopping");
-        Ok(())
     }
 }
 
