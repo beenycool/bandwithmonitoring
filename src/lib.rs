@@ -52,6 +52,8 @@ fn run_headless() -> Result<()> {
     use crate::paths::db_path;
     use crate::store::{spawn, WriterConfig};
     use crossbeam_channel::bounded;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
     use std::time::Duration;
 
     let db = db_path();
@@ -61,6 +63,12 @@ fn run_headless() -> Result<()> {
     let (tx, rx) = bounded::<crate::capture::ConnEvent>(50_000);
 
     let etw = EtwCapture::new()?;
+
+    // Shutdown signal: flipped to `true` either by the optional
+    // BANDWITH_HEADLESS_SECS timer (CI smoke tests) or by a future
+    // Ctrl-C handler. Interactive runs never set it — the process is
+    // terminated externally.
+    let shutdown = Arc::new(AtomicBool::new(false));
 
     // Aggregator thread: receives events, observes them, and flushes
     // accumulated deltas to the writer every 2s.
@@ -85,19 +93,49 @@ fn run_headless() -> Result<()> {
         })?;
 
     // ETW capture thread: blocks for the lifetime of the trace.
+    let etw_shutdown = shutdown.clone();
     let etw_thread = std::thread::Builder::new()
         .name("bandwith-etw".into())
         .spawn(move || {
-            if let Err(e) = etw.run(tx) {
+            if let Err(e) = etw.run(tx, etw_shutdown) {
                 tracing::error!(error = %e, "ETW capture failed");
             }
         })?;
 
-    // Block on the ETW thread. Shutdown happens when the user kills the
-    // process (Ctrl-C in the terminal / Task Manager). A graceful Ctrl-C
-    // handler is a follow-up.
+    // Optional auto-shutdown for CI / reproducible end-to-end runs.
+    // If BANDWITH_HEADLESS_SECS is set, signal the ETW thread to stop
+    // after that many seconds. Real users never set this env var.
+    let shutdown_timer = std::thread::Builder::new()
+        .name("bandwith-shutdown-signal".into())
+        .spawn(move || {
+            let secs: u64 = match std::env::var("BANDWITH_HEADLESS_SECS") {
+                Ok(s) => match s.parse() {
+                    Ok(n) => n,
+                    Err(e) => {
+                        tracing::warn!(
+                            value = %s,
+                            error = %e,
+                            "BANDWITH_HEADLESS_SECS is not a valid u64, ignoring"
+                        );
+                        return;
+                    }
+                },
+                Err(_) => return,
+            };
+            tracing::info!(
+                secs,
+                "BANDWITH_HEADLESS_SECS set; auto-shutting down after this many seconds"
+            );
+            std::thread::sleep(Duration::from_secs(secs));
+            shutdown.store(true, Ordering::Relaxed);
+        })?;
+
+    // Block on the ETW thread. In interactive mode the signal is never
+    // set and the process is terminated externally (Ctrl-C / Task
+    // Manager). A graceful Ctrl-C handler is a follow-up.
     let _ = etw_thread.join();
     let _ = agg_thread.join();
+    let _ = shutdown_timer.join();
     handle.shutdown()?;
     tracing::info!("headless: clean shutdown");
     Ok(())

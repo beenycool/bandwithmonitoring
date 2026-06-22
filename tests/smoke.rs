@@ -21,13 +21,17 @@ fn cli_with_config_path() {
 #[test]
 fn run_headless_succeeds() {
     let args = Args::parse_from(["bandwith", "--headless"]);
-    let result = bandwith::run(args);
-    // --headless is Windows-only (requires ETW). On non-Windows, run() returns
-    // Err. On Windows, it should succeed (we just want a clean exit code path).
     #[cfg(windows)]
-    result.expect("headless run should succeed on Windows");
+    {
+        // Tell --headless to auto-exit after 5s so the smoke test doesn't
+        // hang. Real users never set this env var; it's purely for CI.
+        std::env::set_var("BANDWITH_HEADLESS_SECS", "5");
+        let result = bandwith::run(args);
+        std::env::remove_var("BANDWITH_HEADLESS_SECS");
+        result.expect("headless run should succeed on Windows");
+    }
     #[cfg(not(windows))]
     {
-        let _ = result; // suppress unused warning
+        let _ = bandwith::run(args); // headless is Windows-only; ignore result
     }
 }
