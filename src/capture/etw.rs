@@ -62,7 +62,7 @@ impl EtwCapture {
             )
             .build();
 
-        let (trace, _handle) = UserTrace::new()
+        let (mut trace, _handle) = UserTrace::new()
             .named(session_name.clone())
             .enable(provider)
             .start()
