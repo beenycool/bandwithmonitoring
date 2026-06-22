@@ -32,14 +32,80 @@ pub fn run(args: cli::Args) -> Result<()> {
     }
 
     if args.headless {
-        // Phase 1 stub: just confirm we got here and exit.
-        tracing::info!("headless mode — exiting cleanly");
-        return Ok(());
+        return run_headless();
     }
 
     // Phase 1 stub: don't open a window yet, just return.
     tracing::info!("GUI not yet implemented in phase 1");
     Ok(())
+}
+
+/// `bandwith --headless`: full capture pipeline on Windows.
+///
+/// Wires together the ETW consumer (phase 4), the flow aggregator (phase 2)
+/// and the SQLite writer (phase 3). On non-Windows hosts this returns
+/// `Err` — the headless mode is Windows-only by design.
+#[cfg(windows)]
+fn run_headless() -> Result<()> {
+    use crate::capture::flow::FlowAggregator;
+    use crate::capture::EtwCapture;
+    use crate::paths::db_path;
+    use crate::store::{spawn, WriterConfig};
+    use crossbeam_channel::bounded;
+    use std::time::Duration;
+
+    let db = db_path();
+    tracing::info!(?db, "headless: starting capture pipeline");
+    let handle = spawn(&db, WriterConfig::default())?;
+
+    let (tx, rx) = bounded::<crate::capture::ConnEvent>(50_000);
+
+    let etw = EtwCapture::new()?;
+
+    // Aggregator thread: receives events, observes them, and flushes
+    // accumulated deltas to the writer every 2s.
+    let handle_for_agg = handle.clone();
+    let agg_thread = std::thread::Builder::new()
+        .name("bandwith-aggregator".into())
+        .spawn(move || {
+            let mut agg = FlowAggregator::new();
+            loop {
+                match rx.recv_timeout(Duration::from_secs(2)) {
+                    Ok(ev) => agg.observe(ev),
+                    Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                        agg.maybe_flush(&handle_for_agg);
+                    }
+                    Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                        tracing::info!("aggregator: event channel closed, flushing and exiting");
+                        agg.flush_now(&handle_for_agg);
+                        return;
+                    }
+                }
+            }
+        })?;
+
+    // ETW capture thread: blocks for the lifetime of the trace.
+    let etw_thread = std::thread::Builder::new()
+        .name("bandwith-etw".into())
+        .spawn(move || {
+            if let Err(e) = etw.run(tx) {
+                tracing::error!(error = %e, "ETW capture failed");
+            }
+        })?;
+
+    // Block on the ETW thread. Shutdown happens when the user kills the
+    // process (Ctrl-C in the terminal / Task Manager). A graceful Ctrl-C
+    // handler is a follow-up.
+    let _ = etw_thread.join();
+    let _ = agg_thread.join();
+    handle.shutdown()?;
+    tracing::info!("headless: clean shutdown");
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn run_headless() -> Result<()> {
+    anyhow::bail!("--headless mode is Windows-only (requires ETW)")
 }
 
 fn run_demo() -> Result<()> {
@@ -49,6 +115,10 @@ fn run_demo() -> Result<()> {
     use crate::store::{spawn, Query, Row, WriterConfig};
     use std::net::Ipv4Addr;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    println!(
+        "[phase 4] ETW capture wired in --headless mode; run `bandwith --headless` on Windows to capture live traffic"
+    );
 
     let db = db_path();
     tracing::info!(?db, "demo: writing 1000 fake rows");
