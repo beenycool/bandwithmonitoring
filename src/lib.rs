@@ -141,10 +141,9 @@ fn run_headless() -> Result<()> {
                 .enable_all()
                 .build()
                 .expect("failed to build DNS runtime");
-            let (resolver, mut dns_rx) = Resolver::spawn(
-                ResolverConfig2::default(),
-                dns_rt.handle(),
-            ).expect("failed to spawn DNS resolver");
+            let (resolver, mut dns_rx) =
+                Resolver::spawn(ResolverConfig2::default(), dns_rt.handle())
+                    .expect("failed to spawn DNS resolver");
 
             let mut agg = FlowAggregator::new();
             let mut proc_cache = ProcessCache::new();
